@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo to Listing</title>
+<style>
+  :root {
+    --bg: #faf7f2; --card: #ffffff; --ink: #2a2622; --muted: #6f675e;
+    --line: #e5dfd5; --accent: #2f6f5e; --accent-ink: #ffffff; --warn: #a4471f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1a18; --card: #26231f; --ink: #f1ece4; --muted: #a79f94;
+      --line: #3a362f; --accent: #5fb89f; --accent-ink: #12201b; --warn: #e59a73;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 0 0 8px; }
+  p.sub { color: var(--muted); margin: 0 0 20px; }
+  section.card { background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  input[type=password], input[type=text], textarea {
+    width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; }
+  textarea { min-height: 70px; resize: vertical; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; padding: 10px 16px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .hint { color: var(--muted); font-size: .875rem; margin-top: 6px; }
+  .error { color: var(--warn); font-weight: 600; white-space: pre-wrap; margin-top: 8px; }
+  #thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  #thumbs img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+  .price { font-size: 1.8rem; font-weight: 700; color: var(--accent); }
+  .field { margin: 12px 0; }
+  .field .name { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+  .field .val { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; }
+  .field button { margin-top: 6px; padding: 5px 12px; font-size: .875rem; }
+  .comps { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: .9rem; }
+  a { color: var(--accent); }
+  .status { color: var(--muted); }
+  .note { background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; color: var(--muted); }
+  details summary { cursor: pointer; font-weight: 600; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo to Listing</h1>
+  <p class="sub">Upload a photo of something you want to sell. Get a price, title, and description ready for Facebook Marketplace and Vinted. You review and post it yourself.</p>
+
+  <section class="card" id="keyCard">
+    <h2>1. Your Anthropic API key</h2>
+    <label for="apiKey">API key</label>
+    <input id="apiKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+    <div class="row" style="margin-top:8px">
+      <button id="saveKey">Save key</button>
+      <button id="clearKey" hidden>Forget key</button>
+      <span id="keyStatus" class="status"></span>
+    </div>
+    <details class="hint">
+      <summary>Where do I get a key, and is it safe?</summary>
+      <p>Create one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (you'll need a few dollars of credit). Your key is saved only in this browser and is sent only to Anthropic. It is never stored on any server. Each listing costs a few cents. Don't use this on a shared computer.</p>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>2. Photos and details</h2>
+    <label for="photos">Photos of the item (up to 5)</label>
+    <input id="photos" type="file" accept="image/*" multiple>
+    <div id="thumbs"></div>
+    <div class="field">
+      <label for="notes">Anything Claude should know? (optional)</label>
+      <input id="notes" type="text" placeholder="e.g. brand new with tags, girls size 8, 97 pieces, bought for $60">
+    </div>
+    <button id="go" class="primary">Create my listing</button>
+    <span id="status" class="status"></span>
+    <div id="error" class="error" role="alert"></div>
+  </section>
+
+  <div id="results" hidden></div>
+
+  <section class="card" id="fixCard" hidden>
+    <h2>Something not right?</h2>
+    <label for="fix">Tell Claude what to change</label>
+    <textarea id="fix" placeholder="e.g. Lower the price, it has a scratch on the back. Or: this is the 2019 model, not 2021."></textarea>
+    <div class="row" style="margin-top:8px"><button id="fixGo" class="primary">Update listing</button></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const MODEL = "claude-sonnet-5-5";
+const API_URL = "https://api.anthropic.com/v1/messages";
+const KEY_NAME = "marketplaceListingApiKey";
+const MAX_PHOTOS = 5;
+const MAX_EDGE = 1568;
+
+const SYSTEM_PROMPT = `You help a seller turn photos of an item into ready-to-post listings for Facebook Marketplace and Vinted. The seller reviews and posts everything themselves, so be accurate and honest. The seller is in the United States; prices are in US dollars.
+
+Workflow:
+1. Identify the item from the photos: brand, model/style, color, size, condition (note any wear or damage honestly). Use the seller's notes and obey their corrections.
+2. Brainstorm the words a buyer would actually type to search (brand, model, colorway as commonly named, size, era/style terms, category terms). Use these naturally in titles and descriptions; the first sentence of every description carries the most weight.
+3. Use web search to find the current resale value: sold/completed listings and active comps (eBay sold, Facebook Marketplace, Mercari, Poshmark, Vinted, etc.). Search for the specific brand/model plus "used" or "sold". For vintage/collectible items, price from comps, not retail. If you cannot identify the item well enough to price it, say so in the rationale and give a wide, honest range.
+4. Give a resale value range and a single recommended listing price, set slightly above the likely sale price to leave room for negotiation. Rules of thumb vs retail: like new 50-70%, good 30-50%, fair 15-30%, new in box 60-80%.
+
+Facebook Marketplace: title is specific, searchable, 5-8 words, using the literal word buyers type. Description is 2-4 sentences, opens with the single most-searched keyword phrase, includes brand, size, color, condition, features and flaws, and ends with: "Local pickup only. Cash or Venmo." Also give 20 hashtag-style tags (include #secondhand).
+
+Vinted is for clothing, shoes, accessories and home textiles only. For anything else (electronics, furniture, kitchenware, collectibles, bulk lots), set vinted.applicable to false and give a one-line vinted.skipReason. Vinted charges sellers no fee, so no price markup is needed. Vinted title: Brand + Item Type + Key Detail + Size. Fields: condition (one of "New with tags", "New without tags", "Very good", "Good", "Satisfactory"), brand (as on the tag or "Unbranded"), size, material (if known, else ""). Description is 2-3 practical sentences with fit notes and honest condition detail, no hashtags.
+
+Be honest about flaws. When the seller asks for a change, revise everything affected.
+
+OUTPUT FORMAT: When finished researching, reply with ONE JSON object and nothing else (no markdown fences, no commentary), exactly this shape:
+{
+ "item": {"name": string, "brand": string, "condition": string, "summary": string},
+ "price": {"low": number, "high": number, "recommended": number, "rationale": string,
+           "comps": [{"source": string, "description": string, "price": number, "url": string}]},
+ "facebook": {"title": string, "description": string, "tags": [string]},
+ "vinted": {"applicable": boolean, "skipReason": string, "title": string, "condition": string,
+            "brand": string, "size": string, "material": string, "description": string}
+}
+"comps" has up to 6 entries; use "" for a url you do not have. Numbers are plain dollar amounts without symbols.`;
+
+const $ = (id) => document.getElementById(id);
+let photoBlocks = [];          // resized image content blocks
+let history = [];              // conversation so far, used for "fix it" follow-ups
+let busy = false;
+let sessionKey = "";           // fallback when localStorage is unavailable
+
+/* ---------- API key (stays in this browser) ---------- */
+function getKey() { try { return localStorage.getItem(KEY_NAME) || ""; } catch (e) { return ""; } }
+function setKey(v) {
+  try { if (v) localStorage.setItem(KEY_NAME, v); else localStorage.removeItem(KEY_NAME); return true; }
+  catch (e) { return false; }
+}
+function refreshKeyUi() {
+  const has = !!(getKey() || sessionKey);
+  $("clearKey").hidden = !has;
+  $("keyStatus").textContent = has ? "Key saved." : "";
+  if (has) $("apiKey").value = "";
+  $("apiKey").placeholder = has ? "(saved - paste a new one to replace)" : "sk-ant-...";
+}
+$("saveKey").onclick = () => {
+  const v = $("apiKey").value.trim();
+  if (!v) return;
+  if (!setKey(v)) sessionKey = v;
+  refreshKeyUi();
+  if (sessionKey) $("keyStatus").textContent = "Key kept for this page only (browser storage unavailable).";
+};
+$("clearKey").onclick = () => { setKey(""); sessionKey = ""; refreshKeyUi(); };
+function currentKey() { return getKey() || sessionKey || $("apiKey").value.trim(); }
+
+/* ---------- Photos ---------- */
+function resizeToBlock(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const dataUrl = c.toDataURL("image/jpeg", 0.85);
+      URL.revokeObjectURL(url);
+      resolve({ dataUrl, block: { type: "image", source: { type: "base64", media_type: "image/jpeg", data: dataUrl.split(",")[1] } } });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read " + file.name + ". Try a JPG or PNG.")); };
+    img.src = url;
+  });
+}
+$("photos").onchange = async (e) => {
+  $("error").textContent = "";
+  const files = Array.from(e.target.files || []).slice(0, MAX_PHOTOS);
+  photoBlocks = []; $("thumbs").textContent = "";
+  try {
+    for (const f of files) {
+      const { dataUrl, block } = await resizeToBlock(f);
+      photoBlocks.push(block);
+      const t = document.createElement("img"); t.src = dataUrl; t.alt = "Selected photo"; $("thumbs").appendChild(t);
+    }
+  } catch (err) { $("error").textContent = err.message; }
+};
+
+/* ---------- Claude call ---------- */
+async function callClaude(messages) {
+  const key = currentKey();
+  if (!key) throw new Error("Please paste and save your Anthropic API key first.");
+  let msgs = messages.slice();
+  for (let turn = 0; turn < 6; turn++) {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: MODEL, max_tokens: 4096, system: SYSTEM_PROMPT, messages: msgs,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }]
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 401) throw new Error("Anthropic rejected that API key. Check it and try again.");
+      throw new Error((data.error && data.error.message) || ("Request failed (" + res.status + ")"));
+    }
+    if (data.stop_reason === "pause_turn") {   // server-side search paused; let it continue
+      msgs = msgs.concat([{ role: "assistant", content: data.content }]);
+      continue;
+    }
+    return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  }
+  throw new Error("Research took too long. Please try again.");
+}
+
+function parseListing(text) {
+  const start = text.indexOf("{"), end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("Claude's answer wasn't in the expected format. Please try again.");
+  let obj;
+  try { obj = JSON.parse(text.slice(start, end + 1)); }
+  catch (e) { throw new Error("Claude's answer wasn't in the expected format. Please try again."); }
+  if (!obj.item || !obj.price || !obj.facebook || !obj.vinted) throw new Error("Claude's answer was missing sections. Please try again.");
+  return obj;
+}
+
+/* ---------- Rendering (textContent only, never innerHTML) ---------- */
+function el(tag, props, children) {
+  const n = document.createElement(tag);
+  if (props) Object.assign(n, props);
+  (children || []).forEach((c) => n.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
+  return n;
+}
+function field(name, value) {
+  const val = el("div", { className: "val", textContent: value });
+  const btn = el("button", { textContent: "Copy" });
+  btn.onclick = async () => {
+    try { await navigator.clipboard.writeText(value); btn.textContent = "Copied!"; }
+    catch (e) {
+      const r = document.createRange(); r.selectNodeContents(val);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      btn.textContent = "Selected - press Ctrl/Cmd+C";
+    }
+    setTimeout(() => (btn.textContent = "Copy"), 2000);
+  };
+  return el("div", { className: "field" }, [el("div", { className: "name", textContent: name }), val, btn]);
+}
+const usd = (n) => "$" + (Number(n) || 0).toFixed(2).replace(/\.00$/, "");
+
+function render(d) {
+  const out = $("results"); out.textContent = ""; out.hidden = false;
+  const p = d.price, it = d.item;
+
+  const priceCard = el("section", { className: "card" }, [
+    el("h2", { textContent: it.name || "Your item" }),
+    el("div", { className: "hint", textContent: [it.brand, it.condition].filter(Boolean).join(" · ") }),
+    el("div", { textContent: it.summary || "" }),
+    el("div", { className: "field" }, [
+      el("div", { className: "name", textContent: "Recommended price" }),
+      el("div", { className: "price", textContent: usd(p.recommended) }),
+      el("div", { className: "hint", textContent: "Estimated resale value " + usd(p.low) + " - " + usd(p.high) })
+    ]),
+    el("div", { textContent: p.rationale || "" })
+  ]);
+  const comps = (p.comps || []).filter((c) => c && c.description);
+  if (comps.length) {
+    const ul = el("ul", { className: "comps" });
+    comps.forEach((c) => {
+      const li = el("li", { textContent: (c.source ? c.source + ": " : "") + c.description + (c.price ? " - " + usd(c.price) : "") + " " });
+      if (typeof c.url === "string" && /^https:\/\//.test(c.url)) {
+        li.appendChild(el("a", { href: c.url, target: "_blank", rel: "noopener noreferrer", textContent: "(link)" }));
+      }
+      ul.appendChild(li);
+    });
+    priceCard.appendChild(el("details", null, [el("summary", { textContent: "Comparable listings Claude found" }), ul]));
+  }
+  out.appendChild(priceCard);
+
+  const fb = d.facebook;
+  const tags = (fb.tags || []).map((t) => (String(t).startsWith("#") ? t : "#" + t)).join(" ");
+  out.appendChild(el("section", { className: "card" }, [
+    el("h2", { textContent: "Facebook Marketplace" }),
+    field("Title", fb.title || ""), field("Price", usd(p.recommended)),
+    field("Description", fb.description || ""), field("Tags", tags)
+  ]));
+
+  const v = d.vinted;
+  const vc = el("section", { className: "card" }, [el("h2", { textContent: "Vinted" })]);
+  if (v.applicable) {
+    [["Title", v.title], ["Price", usd(p.recommended)], ["Condition", v.condition], ["Brand", v.brand],
+     ["Size", v.size], ["Material", v.material], ["Description", v.description]]
+      .forEach(([n, val]) => { if (val) vc.appendChild(field(n, val)); });
+    vc.appendChild(el("div", { className: "hint", textContent: "Vinted charges sellers no fee. Listings fade after about a week, so relist periodically." }));
+  } else {
+    vc.appendChild(el("div", { className: "note", textContent: "Skipped: " + (v.skipReason || "this item isn't a good fit for Vinted.") }));
+  }
+  out.appendChild(vc);
+  $("fixCard").hidden = false;
+}
+
+/* ---------- Actions ---------- */
+function setBusy(b, msg) {
+  busy = b; $("go").disabled = b; $("fixGo").disabled = b; $("status").textContent = msg || "";
+}
+async function run(messages) {
+  $("error").textContent = "";
+  setBusy(true, " Researching prices... this can take up to a minute.");
+  try {
+    const text = await callClaude(messages);
+    const listing = parseListing(text);
+    render(listing);
+    history = messages.concat([{ role: "assistant", content: text }]);
+    $("results").scrollIntoView({ behavior: "smooth" });
+  } catch (err) {
+    $("error").textContent = err.message || String(err);
+  } finally { setBusy(false, ""); }
+}
+
+$("go").onclick = () => {
+  if (busy) return;
+  if (!photoBlocks.length) { $("error").textContent = "Add at least one photo first."; return; }
+  const notes = $("notes").value.trim();
+  const content = photoBlocks.concat([{ type: "text", text: "Create listings for this item." + (notes ? "\nSeller notes: " + notes : "") }]);
+  run([{ role: "user", content }]);
+};
+$("fixGo").onclick = () => {
+  if (busy) return;
+  const fix = $("fix").value.trim();
+  if (!fix || !history.length) return;
+  $("fix").value = "";
+  run(history.concat([{ role: "user", content: "Please revise the listing: " + fix + "\nReply with the full updated JSON object only." }]));
+};
+
+refreshKeyUi();
+</script>
+</body>
+</html>
