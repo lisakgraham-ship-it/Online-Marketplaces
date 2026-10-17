@@ -157,7 +157,16 @@ $("saveKey").onclick = () => {
   if (sessionKey) $("keyStatus").textContent = "Key kept for this page only (browser storage unavailable).";
 };
 $("clearKey").onclick = () => { setKey(""); sessionKey = ""; refreshKeyUi(); };
-function currentKey() { return getKey() || sessionKey || $("apiKey").value.trim(); }
+// A key typed or pasted into the box wins over an older saved one, and gets saved.
+function currentKey() {
+  const typed = $("apiKey").value.trim();
+  if (typed) {
+    if (!setKey(typed)) sessionKey = typed;
+    refreshKeyUi();
+    return typed;
+  }
+  return getKey() || sessionKey;
+}
 
 /* ---------- Photos ---------- */
 function resizeToBlock(file) {
@@ -240,19 +249,28 @@ function el(tag, props, children) {
   (children || []).forEach((c) => n.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
   return n;
 }
-function field(name, value) {
-  const val = el("div", { className: "val", textContent: value });
-  const btn = el("button", { textContent: "Copy" });
+function copyButton(label, text, selectEl) {
+  const btn = el("button", { textContent: label });
   btn.onclick = async () => {
-    try { await navigator.clipboard.writeText(value); btn.textContent = "Copied!"; }
+    try { await navigator.clipboard.writeText(text); btn.textContent = "Copied!"; }
     catch (e) {
-      const r = document.createRange(); r.selectNodeContents(val);
+      const r = document.createRange(); r.selectNodeContents(selectEl);
       const s = getSelection(); s.removeAllRanges(); s.addRange(r);
       btn.textContent = "Selected - press Ctrl/Cmd+C";
     }
-    setTimeout(() => (btn.textContent = "Copy"), 2000);
+    setTimeout(() => (btn.textContent = label), 2000);
   };
-  return el("div", { className: "field" }, [el("div", { className: "name", textContent: name }), val, btn]);
+  return btn;
+}
+function field(name, value) {
+  const val = el("div", { className: "val", textContent: value });
+  return el("div", { className: "field" }, [el("div", { className: "name", textContent: name }), val, copyButton("Copy", value, val)]);
+}
+// One block of plain text for the whole listing, with its own "Copy all" button.
+function copyAll(pairs) {
+  const text = pairs.filter(([, v]) => v).map(([n, v]) => n + ": " + v).join("\n\n");
+  const preview = el("div", { className: "val", hidden: true, textContent: text });
+  return el("div", { className: "field" }, [copyButton("Copy all", text, preview), preview]);
 }
 const usd = (n) => "$" + (Number(n) || 0).toFixed(2).replace(/\.00$/, "");
 
@@ -289,6 +307,7 @@ function render(d) {
   const tags = (fb.tags || []).map((t) => (String(t).startsWith("#") ? t : "#" + t)).join(" ");
   out.appendChild(el("section", { className: "card" }, [
     el("h2", { textContent: "Facebook Marketplace" }),
+    copyAll([["Title", fb.title], ["Price", usd(p.recommended)], ["Description", fb.description], ["Tags", tags]]),
     field("Title", fb.title || ""), field("Price", usd(p.recommended)),
     field("Description", fb.description || ""), field("Tags", tags)
   ]));
@@ -296,9 +315,10 @@ function render(d) {
   const v = d.vinted;
   const vc = el("section", { className: "card" }, [el("h2", { textContent: "Vinted" })]);
   if (v.applicable) {
-    [["Title", v.title], ["Price", usd(p.recommended)], ["Condition", v.condition], ["Brand", v.brand],
-     ["Size", v.size], ["Material", v.material], ["Description", v.description]]
-      .forEach(([n, val]) => { if (val) vc.appendChild(field(n, val)); });
+    const vFields = [["Title", v.title], ["Price", usd(p.recommended)], ["Condition", v.condition], ["Brand", v.brand],
+      ["Size", v.size], ["Material", v.material], ["Description", v.description]];
+    vc.appendChild(copyAll(vFields));
+    vFields.forEach(([n, val]) => { if (val) vc.appendChild(field(n, val)); });
     vc.appendChild(el("div", { className: "hint", textContent: "Vinted charges sellers no fee. Listings fade after about a week, so relist periodically." }));
   } else {
     vc.appendChild(el("div", { className: "note", textContent: "Skipped: " + (v.skipReason || "this item isn't a good fit for Vinted.") }));
